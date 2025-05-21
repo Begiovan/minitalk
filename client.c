@@ -1,90 +1,69 @@
 #include <signal.h>
+#include <stdio.h>
+#include <string.h>
 #include <unistd.h>
 #include <stdlib.h>
-#include <stdio.h>
-#include <stdbool.h>
 
-volatile sig_atomic_t g_ack_received = false;
+volatile sig_atomic_t g_bit_acknowledged = 0;
 
-// Signal handler for server acknowledgement
-void handle_ack(int signum)
+void    ack_handler(int sig)
 {
-    (void)signum;
-    g_ack_received = true;
+    (void)sig;
+    g_bit_acknowledged = 1;
 }
 
-void send_bit(int pid, int bit)
+void    send_signal(int pid, unsigned char character)
 {
-    // Reset acknowledgement flag
-    g_ack_received = false;
-    
-    // Send the bit signal
-    if (bit == 1)
-        kill(pid, SIGUSR2);
-    else
-        kill(pid, SIGUSR1);
-    
-    // Wait for acknowledgement
-    while (!g_ack_received)
-        usleep(100); // Small sleep to avoid busy waiting
-}
+    int    i;
 
-void send_char(int pid, char c)
-{
-    int i;
-    
-    for (i = 7; i >= 0; i--)
+    i = 0;
+    while (i < 8)
     {
-        int bit = (c >> i) & 1;
-        send_bit(pid, bit);
+        g_bit_acknowledged = 0;
+        
+        if ((character >> i) & 1)
+            kill(pid, SIGUSR1);
+        else
+            kill(pid, SIGUSR2);
+        
+        while (!g_bit_acknowledged)
+            usleep(100);
+            
+        i++;
     }
 }
 
-int main(int argc, char *argv[])
+int    main(int argc, char *argv[])
 {
-    int server_pid;
-    char *str;
-    int i = 0;
+    pid_t        server_pid;
+    const char    *message;
+    int            i;
     struct sigaction sa;
-    
+
     if (argc != 3)
     {
-        printf("Usage: %s <server_pid> <string>\n", argv[0]);
-        return 1;
+        printf("Usage: %s <pid> <message>\n", argv[0]);
+        exit(0);
     }
     
-    server_pid = atoi(argv[1]);
-    if (server_pid <= 0)
-    {
-        printf("Invalid PID\n");
-        return 1;
-    }
-    
-    str = argv[2];
-    
-    // Set up acknowledgement signal handler
-    sa.sa_handler = handle_ack;
-    sigemptyset(&sa.sa_mask);
+    sa.sa_handler = ack_handler;
     sa.sa_flags = 0;
+    sigemptyset(&sa.sa_mask);
     sigaction(SIGUSR1, &sa, NULL);
     
-    // Send our PID to the server first
-    printf("Connecting to server PID: %d\n", server_pid);
-    kill(server_pid, SIGTERM);
-    usleep(10000); // Wait 10ms for server to set up
+    server_pid = atoi(argv[1]);
+    message = argv[2];
     
-    // Send each character
-    printf("Sending message: %s\n", str);
-    while (str[i])
+    i = 0;
+    while (message[i])
     {
-        send_char(server_pid, str[i]);
+        send_signal(server_pid, message[i]);
         i++;
     }
     
-    // Send a newline at the end
-    send_char(server_pid, '\n');
+    send_signal(server_pid, '\0');
+
+    usleep(1000);
     
-    printf("Message sent successfully\n");
-    
-    return 0;
+    return (0);
 }
